@@ -232,7 +232,7 @@ func TestWALSidecarNotPlaintext(t *testing.T) {
 	if _, err := db.Exec("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)"); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if _, err := db.Exec("INSERT INTO t (val) VALUES (?)", "data"); err != nil {
 			t.Fatal(err)
 		}
@@ -258,7 +258,7 @@ func TestConcurrentReopen(t *testing.T) {
 	key := testKey()
 	path := filepath.Join(t.TempDir(), "reopen.db")
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		db, err := Open(path, Options{Key: key, Encryption: EncryptionRequired})
 		if err != nil {
 			t.Fatalf("iteration %d open: %v", i, err)
@@ -360,7 +360,7 @@ func TestPreparedStatements(t *testing.T) {
 	}
 	defer insertStmt.Close()
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if _, err := insertStmt.Exec("item"); err != nil {
 			t.Fatalf("exec %d: %v", i, err)
 		}
