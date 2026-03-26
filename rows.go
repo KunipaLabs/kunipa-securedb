@@ -7,6 +7,7 @@ import "C"
 
 import (
 	"database/sql/driver"
+	"fmt"
 	"io"
 	"unsafe"
 )
@@ -25,12 +26,23 @@ func (r *rows) Columns() []string {
 }
 
 // Close finalizes the statement if owned.
+// Note: sqlite3_finalize() always deallocates the statement. The return code
+// reflects the last sqlite3_step() evaluation, not a cleanup failure.
 func (r *rows) Close() error {
-	if r.owned && r.s != nil {
-		r.conn.mu.Lock()
-		C.sqlite3_finalize(r.s)
-		r.s = nil
-		r.conn.mu.Unlock()
+	if !r.owned {
+		return nil
+	}
+	r.conn.mu.Lock()
+	defer r.conn.mu.Unlock()
+
+	if r.s == nil {
+		return nil
+	}
+	rc := C.sqlite3_finalize(r.s)
+	r.s = nil
+
+	if rc != C.SQLITE_OK {
+		return fmt.Errorf("securedb: finalize: sqlite error %d", int(rc))
 	}
 	return nil
 }
@@ -50,6 +62,10 @@ func (r *rows) Next(dest []driver.Value) error {
 	}
 	if rc != C.SQLITE_ROW {
 		return r.conn.lastError("rows next")
+	}
+
+	if len(dest) != len(r.cols) {
+		return fmt.Errorf("securedb: rows.Next: dest length %d does not match column count %d", len(dest), len(r.cols))
 	}
 
 	for i := 0; i < len(dest); i++ {

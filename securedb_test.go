@@ -584,3 +584,141 @@ func TestLooksPlaintextNonexistent(t *testing.T) {
 		t.Fatal("nonexistent file should not look plaintext")
 	}
 }
+
+// Test: Type bindings — []byte, float64, bool, nil round-trip through bind + scan
+func TestTypeBindings(t *testing.T) {
+	key := testKey()
+	db, _ := openTestDB(t, key)
+	defer db.Close()
+
+	if _, err := db.Exec(`CREATE TABLE types (
+		id INTEGER PRIMARY KEY,
+		b BLOB,
+		f REAL,
+		flag INTEGER,
+		n TEXT
+	)`); err != nil {
+		t.Fatal(err)
+	}
+
+	blob := []byte{0xDE, 0xAD, 0xBE, 0xEF}
+	pi := 3.14159265358979
+	flag := true
+
+	// Insert with all typed bindings including nil.
+	if _, err := db.Exec(
+		"INSERT INTO types (b, f, flag, n) VALUES (?, ?, ?, ?)",
+		blob, pi, flag, nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotBlob []byte
+	var gotFloat float64
+	var gotFlag bool
+	var gotNull sql.NullString
+	if err := db.QueryRow("SELECT b, f, flag, n FROM types WHERE id = 1").Scan(
+		&gotBlob, &gotFloat, &gotFlag, &gotNull,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(gotBlob) != len(blob) {
+		t.Fatalf("blob length: got %d, want %d", len(gotBlob), len(blob))
+	}
+	for i := range blob {
+		if gotBlob[i] != blob[i] {
+			t.Fatalf("blob[%d]: got %x, want %x", i, gotBlob[i], blob[i])
+		}
+	}
+	if gotFloat != pi {
+		t.Fatalf("float64: got %v, want %v", gotFloat, pi)
+	}
+	if !gotFlag {
+		t.Fatal("bool: got false, want true")
+	}
+	if gotNull.Valid {
+		t.Fatalf("null: got %q, want NULL", gotNull.String)
+	}
+
+	// Test false bool.
+	if _, err := db.Exec("INSERT INTO types (flag) VALUES (?)", false); err != nil {
+		t.Fatal(err)
+	}
+	var gotFalse bool
+	if err := db.QueryRow("SELECT flag FROM types WHERE id = 2").Scan(&gotFalse); err != nil {
+		t.Fatal(err)
+	}
+	if gotFalse {
+		t.Fatal("bool: got true, want false")
+	}
+
+	// Test empty blob.
+	if _, err := db.Exec("INSERT INTO types (b) VALUES (?)", []byte{}); err != nil {
+		t.Fatal(err)
+	}
+	var gotEmpty []byte
+	if err := db.QueryRow("SELECT b FROM types WHERE id = 3").Scan(&gotEmpty); err != nil {
+		t.Fatal(err)
+	}
+	if len(gotEmpty) != 0 {
+		t.Fatalf("empty blob: got len %d, want 0", len(gotEmpty))
+	}
+}
+
+// Test: BeginTx with non-default isolation level returns error
+func TestBeginTxNonDefaultIsolation(t *testing.T) {
+	key := testKey()
+	db, _ := openTestDB(t, key)
+	defer db.Close()
+
+	_, err := db.BeginTx(context.Background(), &sql.TxOptions{
+		Isolation: sql.LevelSerializable,
+	})
+	if err == nil {
+		t.Fatal("expected error for non-default isolation level")
+	}
+	t.Logf("isolation error (expected): %v", err)
+}
+
+// Test: ExecContext with parameterized arguments
+func TestExecContextWithArgs(t *testing.T) {
+	key := testKey()
+	db, _ := openTestDB(t, key)
+	defer db.Close()
+
+	if _, err := db.Exec("CREATE TABLE args (id INTEGER PRIMARY KEY, val TEXT, num INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := db.ExecContext(context.Background(),
+		"INSERT INTO args (val, num) VALUES (?, ?)", "hello", int64(42))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lastID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lastID != 1 {
+		t.Fatalf("LastInsertId: got %d, want 1", lastID)
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rowsAffected != 1 {
+		t.Fatalf("RowsAffected: got %d, want 1", rowsAffected)
+	}
+
+	var val string
+	var num int64
+	if err := db.QueryRow("SELECT val, num FROM args WHERE id = 1").Scan(&val, &num); err != nil {
+		t.Fatal(err)
+	}
+	if val != "hello" || num != 42 {
+		t.Fatalf("got (%q, %d), want (\"hello\", 42)", val, num)
+	}
+}

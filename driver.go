@@ -66,20 +66,20 @@ func (cn *connector) Connect(_ context.Context) (driver.Conn, error) {
 	// Apply per-connection PRAGMAs.
 	if cn.busyTimeout > 0 {
 		ms := int(cn.busyTimeout / time.Millisecond)
-		if err := c.execLocked(fmt.Sprintf("PRAGMA busy_timeout = %d", ms)); err != nil {
+		if err := c.execRaw(fmt.Sprintf("PRAGMA busy_timeout = %d", ms)); err != nil {
 			C.securedb_close(db)
 			return nil, fmt.Errorf("securedb: set busy_timeout: %w", err)
 		}
 	}
 
 	if cn.wal {
-		if err := c.execLocked("PRAGMA journal_mode = WAL"); err != nil {
+		if err := c.execRaw("PRAGMA journal_mode = WAL"); err != nil {
 			C.securedb_close(db)
 			return nil, fmt.Errorf("securedb: set journal_mode: %w", err)
 		}
 	}
 
-	if err := c.execLocked("PRAGMA foreign_keys = ON"); err != nil {
+	if err := c.execRaw("PRAGMA foreign_keys = ON"); err != nil {
 		C.securedb_close(db)
 		return nil, fmt.Errorf("securedb: set foreign_keys: %w", err)
 	}

@@ -13,7 +13,7 @@ func (t *tx) Commit() error {
 	if t.conn.closed {
 		return ErrClosed
 	}
-	return t.conn.execLocked("COMMIT")
+	return t.conn.execRaw("COMMIT")
 }
 
 // Rollback aborts the transaction.
@@ -24,5 +24,5 @@ func (t *tx) Rollback() error {
 	if t.conn.closed {
 		return ErrClosed
 	}
-	return t.conn.execLocked("ROLLBACK")
+	return t.conn.execRaw("ROLLBACK")
 }

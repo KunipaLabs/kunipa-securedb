@@ -117,7 +117,7 @@ func (c *conn) BeginTx(_ context.Context, opts driver.TxOptions) (driver.Tx, err
 		beginSQL = "BEGIN DEFERRED"
 	}
 
-	if err := c.execLocked(beginSQL); err != nil {
+	if err := c.execRaw(beginSQL); err != nil {
 		return nil, err
 	}
 
@@ -139,7 +139,7 @@ func (c *conn) ExecContext(_ context.Context, query string, args []driver.NamedV
 
 	if len(args) == 0 {
 		// Fast path: no arguments, use sqlite3_exec.
-		if err := c.execLocked(query); err != nil {
+		if err := c.execRaw(query); err != nil {
 			return nil, err
 		}
 		rowsAffected := int64(C.sqlite3_changes(c.db))
@@ -210,9 +210,9 @@ func (c *conn) QueryContext(_ context.Context, query string, args []driver.Named
 	}, nil
 }
 
-// execLocked executes a simple SQL statement without arguments.
+// execRaw executes a simple SQL statement without arguments.
 // Caller must hold c.mu.
-func (c *conn) execLocked(sql string) error {
+func (c *conn) execRaw(sql string) error {
 	cSQL := C.CString(sql)
 	defer C.free(unsafe.Pointer(cSQL))
 

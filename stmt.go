@@ -7,6 +7,7 @@ import "C"
 
 import (
 	"database/sql/driver"
+	"fmt"
 )
 
 // stmt implements driver.Stmt.
@@ -16,19 +17,29 @@ type stmt struct {
 }
 
 // Close finalizes the prepared statement.
+// Note: sqlite3_finalize() always deallocates the statement. The return code
+// reflects the last sqlite3_step() evaluation, not a cleanup failure.
 func (st *stmt) Close() error {
+	st.conn.mu.Lock()
+	defer st.conn.mu.Unlock()
+
 	if st.s == nil {
 		return nil
 	}
-	st.conn.mu.Lock()
-	C.sqlite3_finalize(st.s)
+	rc := C.sqlite3_finalize(st.s)
 	st.s = nil
-	st.conn.mu.Unlock()
+
+	if rc != C.SQLITE_OK {
+		return fmt.Errorf("securedb: finalize: sqlite error %d", int(rc))
+	}
 	return nil
 }
 
 // NumInput returns the number of placeholder parameters.
 func (st *stmt) NumInput() int {
+	st.conn.mu.Lock()
+	defer st.conn.mu.Unlock()
+
 	if st.s == nil {
 		return 0
 	}
