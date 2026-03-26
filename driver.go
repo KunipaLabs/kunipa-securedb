@@ -12,6 +12,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"runtime"
+	"sync"
 	"time"
 	"unsafe"
 )
@@ -22,6 +23,7 @@ import (
 type connector struct {
 	path        string
 	key         []byte
+	keyMu       sync.RWMutex // protects key reads/writes across Connect, RotateKey, Close
 	flags       C.int
 	busyTimeout time.Duration
 	wal         bool
@@ -33,6 +35,7 @@ func (cn *connector) Connect(_ context.Context) (driver.Conn, error) {
 	cPath := C.CString(cn.path)
 	defer C.free(unsafe.Pointer(cPath))
 
+	cn.keyMu.RLock()
 	var cKey *C.char
 	var cKeyLen C.int
 	if len(cn.key) > 0 {
@@ -43,6 +46,7 @@ func (cn *connector) Connect(_ context.Context) (driver.Conn, error) {
 	var db *C.sqlite3
 	rc := C.securedb_open(cPath, cKey, cKeyLen, cn.flags, &db)
 	runtime.KeepAlive(cn.key) // prevent GC from moving key during C call
+	cn.keyMu.RUnlock()
 	if rc != C.SQLITE_OK {
 		if rc == C.SQLITE_NOTADB {
 			if len(cn.key) > 0 {
@@ -57,7 +61,7 @@ func (cn *connector) Connect(_ context.Context) (driver.Conn, error) {
 		return nil, fmt.Errorf("securedb: open: [%d] %s", int(rc), errMsg)
 	}
 
-	c := &conn{db: db}
+	c := &conn{db: db, parent: cn}
 
 	// Apply per-connection PRAGMAs.
 	if cn.busyTimeout > 0 {
@@ -85,7 +89,15 @@ func (cn *connector) Connect(_ context.Context) (driver.Conn, error) {
 
 // Close zeros the encryption key material.
 // Called automatically by sql.DB.Close() (io.Closer on connector, Go 1.22+).
+//
+// Key zeroing is best-effort: Go's garbage collector may copy the backing
+// array during heap compaction. Prior copies become unreachable and cannot
+// be zeroed. This is an inherent limitation of managed memory in Go.
+// For threat models requiring stronger guarantees, consider mlock(2) via
+// syscall or storing the key in a C-allocated buffer outside the Go heap.
 func (cn *connector) Close() error {
+	cn.keyMu.Lock()
+	defer cn.keyMu.Unlock()
 	for i := range cn.key {
 		cn.key[i] = 0
 	}

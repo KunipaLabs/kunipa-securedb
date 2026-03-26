@@ -8,6 +8,7 @@ import "C"
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"fmt"
 	"os"
@@ -78,6 +79,10 @@ func (o *Options) busyTimeout() time.Duration {
 }
 
 // isMemoryPath reports whether path requests an in-memory database.
+// Only the literal ":memory:" is matched. SQLite also recognizes URI forms
+// like "file::memory:" and "file::memory:?cache=shared", but those require
+// SQLITE_OPEN_URI which we do not pass. If URI support is added in the
+// future, this function must be updated accordingly.
 func isMemoryPath(path string) bool {
 	return path == ":memory:"
 }
@@ -113,8 +118,16 @@ func Open(path string, opts Options) (*sql.DB, error) {
 
 // buildConnector validates options and returns a configured connector.
 func buildConnector(path string, opts Options) (*connector, error) {
+	if opts.Encryption != EncryptionRequired && opts.Encryption != EncryptionDisabled {
+		return nil, fmt.Errorf("securedb: unknown encryption mode %d", opts.Encryption)
+	}
+
 	if opts.Encryption == EncryptionRequired && len(opts.Key) == 0 {
 		return nil, ErrKeyRequired
+	}
+
+	if opts.BusyTimeout < 0 {
+		return nil, fmt.Errorf("securedb: busy timeout must not be negative")
 	}
 
 	inMemory := isMemoryPath(path)
@@ -173,7 +186,10 @@ func Available() error {
 	defer os.RemoveAll(tmpDir)
 
 	testPath := filepath.Join(tmpDir, "check.db")
-	testKey := []byte("securedb-availability-check-key!") // 32 bytes
+	testKey := make([]byte, 32)
+	if _, err := rand.Read(testKey); err != nil {
+		return fmt.Errorf("securedb: generate test key: %w", err)
+	}
 
 	db, err := Open(testPath, Options{
 		Key:        testKey,
@@ -198,10 +214,8 @@ func Available() error {
 // RotateKey changes the encryption key of an open database.
 // The database must have been opened with encryption enabled.
 //
-// IMPORTANT: After RotateKey succeeds, the caller MUST close the *sql.DB
-// and re-open it with the new key. The internal connector still holds the old
-// key, so any new physical connection created by the pool would fail.
-// Pattern: RotateKey(db, newKey) → db.Close() → Open(path, Options{Key: newKey})
+// After a successful rekey, the connector's key is updated in place so
+// new physical connections created by the pool will use the new key.
 func RotateKey(db *sql.DB, newKey []byte) error {
 	if len(newKey) == 0 {
 		return fmt.Errorf("securedb: new key must not be empty")
@@ -237,6 +251,20 @@ func RotateKey(db *sql.DB, newKey []byte) error {
 		if rc != C.SQLITE_OK {
 			return c.lastError("rekey")
 		}
+
+		// Zero old key and replace with new key in the connector
+		// so future connections use the rotated key.
+		// Copy from keyCopy (our defensive copy), not newKey (caller's slice).
+		if c.parent != nil {
+			c.parent.keyMu.Lock()
+			for i := range c.parent.key {
+				c.parent.key[i] = 0
+			}
+			c.parent.key = make([]byte, len(keyCopy))
+			copy(c.parent.key, keyCopy)
+			c.parent.keyMu.Unlock()
+		}
+
 		return nil
 	})
 }

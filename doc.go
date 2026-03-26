@@ -16,13 +16,21 @@
 // Operations will complete regardless of context deadlines or cancellation.
 // With MaxOpenConns(1) and local I/O, this is unlikely to cause issues.
 //
+// Limitation: key zeroing on Close is best-effort. Go's garbage collector may
+// copy the key's backing array during heap compaction; prior copies are
+// unreachable and cannot be zeroed. See connector.Close documentation.
+//
 // Build requirements:
 //
 //	# Debian/Ubuntu
 //	sudo apt-get install libsqlcipher-dev
 //
-//	# macOS
+//	# macOS (Apple Silicon — default Homebrew prefix)
 //	brew install sqlcipher
+//
+// On Intel Macs, Homebrew installs to /usr/local/opt/sqlcipher instead of
+// /opt/homebrew/opt/sqlcipher. Set CGO_CFLAGS and CGO_LDFLAGS manually
+// or use pkg-config in that case.
 //
 // Coexistence with mattn/go-sqlite3:
 //

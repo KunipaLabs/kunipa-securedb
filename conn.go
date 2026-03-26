@@ -20,6 +20,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"runtime"
 	"sync"
 	"unsafe"
 )
@@ -29,6 +30,7 @@ type conn struct {
 	db     *C.sqlite3
 	mu     sync.Mutex
 	closed bool
+	parent *connector // back-reference for key updates (e.g. RotateKey)
 }
 
 // Prepare returns a prepared statement bound to this connection.
@@ -92,6 +94,11 @@ func (c *conn) Begin() (driver.Tx, error) {
 
 // BeginTx starts a transaction with context and options.
 // SQLite does not support isolation levels — only the default level is accepted.
+//
+// ReadOnly hint: when opts.ReadOnly is true, BEGIN DEFERRED is used instead of
+// BEGIN. This does NOT enforce read-only semantics — SQLite has no protocol-level
+// read-only transaction. Writes will still succeed. The hint is accepted without
+// error to allow compatibility with code that sets ReadOnly on sql.TxOptions.
 func (c *conn) BeginTx(_ context.Context, opts driver.TxOptions) (driver.Tx, error) {
 	// Reject non-default isolation levels (SQLite has a single isolation model).
 	if opts.Isolation != 0 { // 0 = driver.IsolationLevel default
@@ -118,6 +125,10 @@ func (c *conn) BeginTx(_ context.Context, opts driver.TxOptions) (driver.Tx, err
 }
 
 // ExecContext executes a query that doesn't return rows.
+//
+// Behavior note: without arguments, sqlite3_exec is used and will execute all
+// semicolon-separated statements in the query. With arguments, sqlite3_prepare_v2
+// is used and will only prepare/execute the first statement.
 func (c *conn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -253,6 +264,7 @@ func bindArgs(s *C.sqlite3_stmt, args []driver.NamedValue) error {
 				rc = C.sqlite3_bind_zeroblob(s, idx, 0)
 			} else {
 				rc = C.securedb_bind_blob(s, idx, unsafe.Pointer(&v[0]), C.int(len(v)))
+				runtime.KeepAlive(v) // prevent GC from collecting v during the C call
 			}
 		default:
 			return fmt.Errorf("securedb: unsupported type %T for parameter %d", v, arg.Ordinal)
