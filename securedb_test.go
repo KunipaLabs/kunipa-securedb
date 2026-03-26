@@ -477,6 +477,26 @@ func TestCanOpenWithKey(t *testing.T) {
 	}
 }
 
+// Test: connector key is zeroed after db.Close()
+func TestConnectorKeyZeroedOnClose(t *testing.T) {
+	key := testKey()
+	path := filepath.Join(t.TempDir(), "zero.db")
+
+	cn := newConnector(path, key)
+	db := sql.OpenDB(cn)
+	db.SetMaxOpenConns(1)
+	if err := db.Ping(); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+
+	db.Close()
+
+	// After Close, connector.key must be nil and all bytes zeroed.
+	if cn.key != nil {
+		t.Fatal("connector.key should be nil after Close")
+	}
+}
+
 // Test: LooksPlaintext on nonexistent file
 func TestLooksPlaintextNonexistent(t *testing.T) {
 	plain, err := LooksPlaintext("/nonexistent/path/db.sqlite")

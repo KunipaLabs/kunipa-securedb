@@ -16,7 +16,7 @@ import (
 	"unsafe"
 )
 
-// connector implements driver.Connector.
+// connector implements driver.Connector and io.Closer.
 // It captures the key and options in a closure so the key never appears in a DSN string.
 // Every call to Connect() applies the key atomically via securedb_open().
 type connector struct {
@@ -25,6 +25,20 @@ type connector struct {
 	flags       C.int
 	busyTimeout time.Duration
 	wal         bool
+}
+
+// newConnector creates a connector with default flags for read-write + create.
+func newConnector(path string, key []byte) *connector {
+	flags := C.SQLITE_OPEN_READWRITE | C.SQLITE_OPEN_CREATE | C.SQLITE_OPEN_NOMUTEX
+	k := make([]byte, len(key))
+	copy(k, key)
+	return &connector{
+		path:        path,
+		key:         k,
+		flags:       C.int(flags),
+		busyTimeout: 5 * time.Second,
+		wal:         true,
+	}
 }
 
 // Connect opens a new connection to the database.
@@ -81,6 +95,16 @@ func (cn *connector) Connect(_ context.Context) (driver.Conn, error) {
 	}
 
 	return c, nil
+}
+
+// Close zeros the encryption key material.
+// Called automatically by sql.DB.Close() (io.Closer on connector, Go 1.22+).
+func (cn *connector) Close() error {
+	for i := range cn.key {
+		cn.key[i] = 0
+	}
+	cn.key = nil
+	return nil
 }
 
 // Driver returns the underlying driver (required by driver.Connector).
