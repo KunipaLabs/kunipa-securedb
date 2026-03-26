@@ -96,7 +96,23 @@ func isMemoryPath(path string) bool {
 //
 // MaxOpenConns(1) is enforced by default.
 func Open(path string, opts Options) (*sql.DB, error) {
-	// Validate encryption intent.
+	cn, err := buildConnector(path, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	db := registerDriver(cn)
+	db.SetMaxOpenConns(1)
+
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+// buildConnector validates options and returns a configured connector.
+func buildConnector(path string, opts Options) (*connector, error) {
 	if opts.Encryption == EncryptionRequired && len(opts.Key) == 0 {
 		return nil, ErrKeyRequired
 	}
@@ -131,31 +147,20 @@ func Open(path string, opts Options) (*sql.DB, error) {
 		}
 	}
 
-	// Determine key for the connector.
+	// Copy key to prevent caller mutation.
 	var key []byte
 	if opts.Encryption == EncryptionRequired {
 		key = make([]byte, len(opts.Key))
 		copy(key, opts.Key)
 	}
 
-	cn := &connector{
+	return &connector{
 		path:        path,
 		key:         key,
 		flags:       C.int(flags),
 		busyTimeout: opts.busyTimeout(),
 		wal:         !inMemory && opts.walEnabled(), // WAL is not applicable to in-memory databases
-	}
-
-	db := registerDriver(cn)
-	db.SetMaxOpenConns(1)
-
-	// Verify the connection works.
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, err
-	}
-
-	return db, nil
+	}, nil
 }
 
 // Available verifies that the current binary supports SQLCipher by opening
@@ -202,16 +207,22 @@ func RotateKey(db *sql.DB, newKey []byte) error {
 		return fmt.Errorf("securedb: new key must not be empty")
 	}
 
-	// We need to get the raw connection to call the C API.
-	var retErr error
-	ctx := context.Background()
-	rawConn, err := db.Conn(ctx)
+	// Copy to prevent caller mutation during the C call.
+	keyCopy := make([]byte, len(newKey))
+	copy(keyCopy, newKey)
+	defer func() {
+		for i := range keyCopy {
+			keyCopy[i] = 0
+		}
+	}()
+
+	rawConn, err := db.Conn(context.Background())
 	if err != nil {
 		return fmt.Errorf("securedb: get connection: %w", err)
 	}
 	defer rawConn.Close()
 
-	err = rawConn.Raw(func(driverConn interface{}) error {
+	return rawConn.Raw(func(driverConn any) error {
 		c, ok := driverConn.(*conn)
 		if !ok {
 			return fmt.Errorf("securedb: unexpected driver connection type %T", driverConn)
@@ -220,17 +231,12 @@ func RotateKey(db *sql.DB, newKey []byte) error {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 
-		cKey := (*C.char)(unsafe.Pointer(&newKey[0]))
-		rc := C.securedb_rekey(c.db, cKey, C.int(len(newKey)))
-		runtime.KeepAlive(newKey) // prevent GC from moving key during C call
+		cKey := (*C.char)(unsafe.Pointer(&keyCopy[0]))
+		rc := C.securedb_rekey(c.db, cKey, C.int(len(keyCopy)))
+		runtime.KeepAlive(keyCopy)
 		if rc != C.SQLITE_OK {
 			return c.lastError("rekey")
 		}
 		return nil
 	})
-	if err != nil {
-		retErr = err
-	}
-
-	return retErr
 }

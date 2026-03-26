@@ -482,7 +482,17 @@ func TestConnectorKeyZeroedOnClose(t *testing.T) {
 	key := testKey()
 	path := filepath.Join(t.TempDir(), "zero.db")
 
-	cn := newConnector(path, key)
+	cn, err := buildConnector(path, Options{
+		Key:        key,
+		Encryption: EncryptionRequired,
+	})
+	if err != nil {
+		t.Fatalf("buildConnector: %v", err)
+	}
+
+	// Snapshot the key backing array before Close to verify zeroing.
+	keyRef := cn.key
+
 	db := sql.OpenDB(cn)
 	db.SetMaxOpenConns(1)
 	if err := db.Ping(); err != nil {
@@ -491,9 +501,13 @@ func TestConnectorKeyZeroedOnClose(t *testing.T) {
 
 	db.Close()
 
-	// After Close, connector.key must be nil and all bytes zeroed.
 	if cn.key != nil {
 		t.Fatal("connector.key should be nil after Close")
+	}
+	for i, b := range keyRef {
+		if b != 0 {
+			t.Fatalf("key byte %d not zeroed: got %d", i, b)
+		}
 	}
 }
 

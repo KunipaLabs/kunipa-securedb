@@ -27,20 +27,6 @@ type connector struct {
 	wal         bool
 }
 
-// newConnector creates a connector with default flags for read-write + create.
-func newConnector(path string, key []byte) *connector {
-	flags := C.SQLITE_OPEN_READWRITE | C.SQLITE_OPEN_CREATE | C.SQLITE_OPEN_NOMUTEX
-	k := make([]byte, len(key))
-	copy(k, key)
-	return &connector{
-		path:        path,
-		key:         k,
-		flags:       C.int(flags),
-		busyTimeout: 5 * time.Second,
-		wal:         true,
-	}
-}
-
 // Connect opens a new connection to the database.
 // The encryption key is applied atomically on every physical connection.
 func (cn *connector) Connect(_ context.Context) (driver.Conn, error) {

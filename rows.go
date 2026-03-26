@@ -27,8 +27,10 @@ func (r *rows) Columns() []string {
 // Close finalizes the statement if owned.
 func (r *rows) Close() error {
 	if r.owned && r.s != nil {
+		r.conn.mu.Lock()
 		C.sqlite3_finalize(r.s)
 		r.s = nil
+		r.conn.mu.Unlock()
 	}
 	return nil
 }

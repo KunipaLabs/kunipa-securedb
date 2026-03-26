@@ -20,8 +20,10 @@ func (st *stmt) Close() error {
 	if st.s == nil {
 		return nil
 	}
+	st.conn.mu.Lock()
 	C.sqlite3_finalize(st.s)
 	st.s = nil
+	st.conn.mu.Unlock()
 	return nil
 }
 
