@@ -77,7 +77,15 @@ func (o *Options) busyTimeout() time.Duration {
 	return o.BusyTimeout
 }
 
+// isMemoryPath reports whether path requests an in-memory database.
+func isMemoryPath(path string) bool {
+	return path == ":memory:"
+}
+
 // Open opens a SQLCipher database with atomic key application.
+//
+// The special path ":memory:" creates a private in-memory database.
+// In-memory databases ignore CreateIfMissing, WAL, and ReadOnly options.
 //
 // When Encryption is EncryptionRequired (default):
 //   - Key must be non-nil, otherwise ErrKeyRequired is returned.
@@ -93,22 +101,28 @@ func Open(path string, opts Options) (*sql.DB, error) {
 		return nil, ErrKeyRequired
 	}
 
-	// Check file existence.
-	if !opts.createIfMissing() {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			return nil, ErrFileNotFound
-		}
-	}
+	inMemory := isMemoryPath(path)
 
-	// Ensure parent directory exists.
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return nil, fmt.Errorf("securedb: create directory: %w", err)
+	// File-based checks — skip for in-memory databases.
+	if !inMemory {
+		if !opts.createIfMissing() {
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				return nil, ErrFileNotFound
+			}
+		}
+
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return nil, fmt.Errorf("securedb: create directory: %w", err)
+		}
 	}
 
 	// Build SQLite open flags.
 	flags := C.SQLITE_OPEN_NOMUTEX // we manage our own mutex
-	if opts.ReadOnly {
+	if inMemory {
+		// SQLite handles ":memory:" as a path — just need READWRITE|CREATE.
+		flags |= C.SQLITE_OPEN_READWRITE | C.SQLITE_OPEN_CREATE
+	} else if opts.ReadOnly {
 		flags |= C.SQLITE_OPEN_READONLY
 	} else {
 		flags |= C.SQLITE_OPEN_READWRITE
@@ -129,7 +143,7 @@ func Open(path string, opts Options) (*sql.DB, error) {
 		key:         key,
 		flags:       C.int(flags),
 		busyTimeout: opts.busyTimeout(),
-		wal:         opts.walEnabled(),
+		wal:         !inMemory && opts.walEnabled(), // WAL is not applicable to in-memory databases
 	}
 
 	db := registerDriver(cn)

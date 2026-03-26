@@ -497,6 +497,69 @@ func TestConnectorKeyZeroedOnClose(t *testing.T) {
 	}
 }
 
+// Test: in-memory database with encryption disabled
+func TestMemoryUnencrypted(t *testing.T) {
+	db, err := Open(":memory:", Options{
+		Encryption: EncryptionDisabled,
+	})
+	if err != nil {
+		t.Fatalf("Open :memory: unencrypted: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO t (val) VALUES (?)", "mem"); err != nil {
+		t.Fatal(err)
+	}
+
+	var val string
+	if err := db.QueryRow("SELECT val FROM t WHERE id = 1").Scan(&val); err != nil {
+		t.Fatal(err)
+	}
+	if val != "mem" {
+		t.Fatalf("got %q, want %q", val, "mem")
+	}
+}
+
+// Test: in-memory database with encryption enabled
+func TestMemoryEncrypted(t *testing.T) {
+	key := testKey()
+	db, err := Open(":memory:", Options{
+		Key:        key,
+		Encryption: EncryptionRequired,
+	})
+	if err != nil {
+		t.Fatalf("Open :memory: encrypted: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec("CREATE TABLE t (val TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO t (val) VALUES (?)", "secret"); err != nil {
+		t.Fatal(err)
+	}
+
+	var val string
+	if err := db.QueryRow("SELECT val FROM t LIMIT 1").Scan(&val); err != nil {
+		t.Fatal(err)
+	}
+	if val != "secret" {
+		t.Fatalf("got %q, want %q", val, "secret")
+	}
+
+	// Verify cipher is active.
+	version, err := VerifyCipherMetadata(db)
+	if err != nil {
+		t.Fatalf("VerifyCipherMetadata: %v", err)
+	}
+	if version == "" {
+		t.Fatal("cipher_version is empty on encrypted :memory: db")
+	}
+}
+
 // Test: LooksPlaintext on nonexistent file
 func TestLooksPlaintextNonexistent(t *testing.T) {
 	plain, err := LooksPlaintext("/nonexistent/path/db.sqlite")
