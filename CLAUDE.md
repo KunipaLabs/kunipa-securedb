@@ -4,48 +4,51 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A CGO mini-driver for SQLCipher that implements `database/sql/driver` interfaces directly against the SQLite/SQLCipher C API. It exists because `mattn/go-sqlite3`'s `ConnectHook` fires too late — after internal setup reads `sqlite_master` — so `PRAGMA key` can't work on encrypted databases. This driver calls `sqlite3_key()` atomically right after `sqlite3_open_v2()`.
+A Rust crate wrapping SQLCipher (via `rusqlite` + `bundled-sqlcipher`) with atomic key application. It exists to guarantee that the encryption key is applied immediately after opening the database, before any other operation reads `sqlite_master`.
 
-Used by KunipaMail and KunipaLedger. Intentionally limited scope: no named parameters, savepoints, backup API, custom functions, or interrupts.
+Used by KunipaMail and KunipaLedger (Rust + Tauri). Intentionally limited scope: no savepoints, backup API, custom functions, or interrupts.
+
+Reimplemented from Go — the original Go implementation lives on the `main` branch (to be archived as `main-go`).
 
 ## Build
 
-Requires `libsqlcipher-dev` (Debian/Ubuntu) or `sqlcipher` (Homebrew):
-
 ```bash
-go build ./...
+cargo build
 ```
 
-CGO flags are embedded in `doc.go` via `#cgo` directives — no manual `CGO_CFLAGS`/`CGO_LDFLAGS` needed for standard installs.
+Uses `bundled-sqlcipher` by default — no system libraries required. For system-linked SQLCipher, use the `system-sqlcipher` feature.
 
 ## Test
 
 ```bash
-go test -v ./...
+cargo test
 ```
 
-All tests use random 32-byte keys and `t.TempDir()` for database files — no external state required beyond having `libsqlcipher-dev` installed.
+All tests use random 32-byte keys and `tempfile::TempDir` for database files — no external state required.
+
+## Lint
+
+```bash
+cargo clippy -- -D warnings
+```
 
 ## Architecture
 
-Single package, flat structure. The C layer is minimal (`securedb.c`/`securedb.h`) — just the atomic open→key→verify sequence, rekey, close, and error helpers.
+Single crate, flat module structure. No custom C layer — `rusqlite` handles all FFI.
 
-Go files map 1:1 to `database/sql/driver` interfaces:
-- **`securedb.go`** — public API: `Open()`, `Available()`, `RotateKey()`, `Options`, `EncryptionMode`
-- **`driver.go`** — `connector` (captures key in closure, applies on every `Connect()`) and `securedbDriver`
-- **`conn.go`** — `conn` implementing `driver.Conn`, `ExecerContext`, `QueryerContext`; also contains `bindArgs()` for parameter binding
-- **`stmt.go`** — `stmt` implementing `driver.Stmt`
-- **`rows.go`** — `rows` implementing `driver.Rows` with SQLite type→Go type mapping
-- **`tx.go`** — `tx` implementing `driver.Tx` (COMMIT/ROLLBACK)
-- **`result.go`** — `result` implementing `driver.Result`
-- **`verify.go`** — `LooksPlaintext()`, `CanOpenWithKey()`, `VerifyCipherMetadata()`
-- **`errors.go`** — typed sentinel errors (`ErrWrongKey`, `ErrKeyRequired`, etc.)
+- **`src/lib.rs`** — public API: `open()`, `available()`, re-exports
+- **`src/connection.rs`** — `Database` struct with single `Mutex<Option<Inner>>` state, `with_connection()`, `with_connection_mut()`, `rotate_key()`, `close()`, `Drop`
+- **`src/options.rs`** — `Options`, `EncryptionMode` (Required/Disabled)
+- **`src/error.rs`** — `Error` enum with `thiserror`: `KeyRequired`, `WrongKey`, `NotDatabase`, `FileNotFound`, `CipherUnavailable`, `Closed`, `Sqlite`, `Io`
+- **`src/verify.rs`** — `looks_plaintext()`, `can_open_with_key()`, `verify_cipher_metadata()`
+- **`tests/integration.rs`** — 27 integration tests (ported from Go + Rust-specific additions)
 
 ## Key Design Decisions
 
-- **No global driver registration**: uses `sql.OpenDB(connector)` so it coexists with `mattn/go-sqlite3` ("sqlite3") without conflicts.
-- **Key never in DSN**: the encryption key is captured in the `connector` closure. It's copied from `Options.Key` to prevent caller mutation.
-- **`MaxOpenConns(1)` by default**: SQLCipher with a single connection avoids locking complexity. Tests that need multiple connections temporarily bump this.
-- **Context cancellation not propagated to C**: documented limitation. With `MaxOpenConns(1)` and local I/O, this is acceptable.
-- **`runtime.KeepAlive`**: used after C calls that reference Go-managed key bytes to prevent GC from moving them during the call.
-- **`SQLITE_TRANSIENT`**: bind helpers in `conn.go` use C wrapper functions because cgo can't express the `SQLITE_TRANSIENT` macro directly.
+- **Single `Mutex<Inner>` state**: one mutex guards both the connection and the key, preventing inconsistent intermediate states during close/rotate/Drop.
+- **Key never in DSN**: the encryption key is stored in `SecretBox<Vec<u8>>` (from the `secrecy` crate) inside the `Database` struct. It's zeroed on drop via `zeroize`.
+- **PRAGMA key (not raw FFI)**: key application uses `PRAGMA key = "x'hex'"` for simplicity and portability across SQLCipher versions.
+- **Single-connection model**: `Database` owns one `rusqlite::Connection` behind a mutex — structural enforcement of the Go `MaxOpenConns(1)` pattern.
+- **`with_connection` closure pattern**: callers get `&Connection` (or `&mut Connection` for transactions) without the reference escaping the lock.
+- **Deterministic key zeroing**: `SecretBox` + `zeroize` on `Drop` replaces Go's best-effort manual zeroing. No GC copies — Rust's ownership model ensures the key lives in one place.
+- **Idempotent `close()`**: all methods return `Error::Closed` after close. `Drop` is a safety net, not the primary close path.

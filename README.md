@@ -1,89 +1,88 @@
 # kunipa-securedb
 
-Minimal Go `database/sql` driver for SQLCipher with atomic key application.
+Minimal Rust crate for SQLCipher with atomic key application.
 
 ## Problem
 
-`mattn/go-sqlite3`'s `ConnectHook` executes **after** internal setup (busy_timeout, sqlite_master read). On an encrypted database, `PRAGMA key` arrives too late — the driver has already tried to read the unkeyed file.
+When using SQLCipher, the encryption key must be applied immediately after opening the database — before any reads (including internal reads of `sqlite_master`). Most SQLite wrappers don't guarantee this ordering.
 
 ## Solution
 
-This package provides a CGO mini-driver that calls `sqlite3_key()` atomically right after `sqlite3_open_v2()`, before any other operation. It implements `database/sql/driver` interfaces directly against the SQLite/SQLCipher C API.
+This crate wraps `rusqlite` with `bundled-sqlcipher` to provide a single-connection `Database` type that applies the encryption key atomically right after opening, then verifies it with a probe query before returning.
 
 ## Features
 
-- Atomic `sqlite3_open_v2()` → `sqlite3_key()` → verify sequence
-- Key applied to every physical connection (not just the first)
-- `MaxOpenConns(1)` enforced by default
-- Key captured in closure, never in DSN strings
+- Atomic open → `PRAGMA key` → verify sequence
+- Key applied on every connection open (not just the first)
+- Single-connection model enforced structurally via `Mutex`
+- Key stored in `SecretBox` with deterministic zeroing on drop (`zeroize`)
 - `EncryptionMode` separates security intent from key data
-- Typed sentinel errors (`ErrWrongKey`, `ErrKeyRequired`, etc.)
-- Three-level verification: `LooksPlaintext`, `CanOpenWithKey`, `VerifyCipherMetadata`
-- Runtime capability detection via `Available()`
-- Key rotation via `RotateKey`
-- FTS5 support (via system SQLCipher)
+- Typed errors (`WrongKey`, `KeyRequired`, `NotDatabase`, etc.)
+- Three-level verification: `looks_plaintext`, `can_open_with_key`, `verify_cipher_metadata`
+- Runtime capability detection via `available()`
+- Key rotation via `rotate_key`
+- Full `rusqlite` access via `with_connection` / `with_connection_mut` closures
+- FTS5 support (via bundled SQLCipher)
 
 ## Scope
 
-This is intentionally **not** a general-purpose SQLite driver. It supports:
-
-- Types: TEXT, INTEGER, REAL, BLOB, NULL
-- Transactions, prepared statements, `ExecerContext`, `QueryerContext`
-
-It does **not** support: named parameters, savepoints, backup API, custom functions, interrupts.
-
-## Coexistence with mattn/go-sqlite3
-
-This package is autonomous — it does not import `mattn/go-sqlite3`. Consumer binaries can import both:
-
-- `mattn/go-sqlite3` registers as driver `"sqlite3"`
-- `kunipa-securedb` uses `sql.OpenDB(connector)` — no global driver registration conflicts
+This is intentionally **not** a general-purpose SQLite wrapper. It does **not** support: savepoints, backup API, custom functions, or interrupts.
 
 ## Install
 
-```bash
-# Debian/Ubuntu
-sudo apt-get install libsqlcipher-dev
+Add to `Cargo.toml`:
 
-# macOS
-brew install sqlcipher
+```toml
+[dependencies]
+kunipa-securedb = { path = "../kunipa-securedb" }
 ```
+
+No system libraries required — `bundled-sqlcipher` is the default.
 
 ## Usage
 
-```go
-import "github.com/KunipaLabs/kunipa-securedb"
+```rust
+use kunipa_securedb::{open, Options, EncryptionMode};
+use secrecy::SecretBox;
 
 // Open encrypted database
-db, err := securedb.Open("/path/to/db", securedb.Options{
-    Key:        myKey,  // 32-byte random key
-    Encryption: securedb.EncryptionRequired,
-})
+let db = open("/path/to/db", Options {
+    key: Some(SecretBox::new(Box::new(my_key))),
+    encryption: EncryptionMode::Required,
+    ..Options::default()
+})?;
+
+// Use the connection
+db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])?;
+db.execute("INSERT INTO t (val) VALUES (?1)", ["hello"])?;
+
+// Full rusqlite access (including transactions)
+db.with_connection_mut(|conn| {
+    let tx = conn.transaction()?;
+    tx.execute("INSERT INTO t (val) VALUES (?1)", ["world"])?;
+    tx.commit()
+})?;
 
 // Check SQLCipher availability
-if err := securedb.Available(); err != nil {
-    log.Fatal("SQLCipher not available:", err)
-}
+kunipa_securedb::available()?;
 
 // Verify an existing database
-version, err := securedb.VerifyCipherMetadata(db)
+let version = kunipa_securedb::verify_cipher_metadata(&db)?;
 
 // Rotate key
-err = securedb.RotateKey(db, newKey)
+db.rotate_key(&new_key)?;
 ```
 
 ## Build
 
 ```bash
-CGO_CFLAGS="-I/usr/include/sqlcipher -DSQLITE_HAS_CODEC" \
-CGO_LDFLAGS="-lsqlcipher" \
-go build ./...
+cargo build
 ```
 
 ## Test
 
 ```bash
-go test -v ./...
+cargo test
 ```
 
 ## License

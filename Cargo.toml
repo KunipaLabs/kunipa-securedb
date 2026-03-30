@@ -1,0 +1,15 @@
+[package]
+name = "kunipa-securedb"
+version = "0.1.0"
+edition = "2024"
+description = "Minimal SQLCipher wrapper with atomic key application"
+license = "MIT"
+
+[dependencies]
+rusqlite = { version = "0.33", features = ["bundled-sqlcipher"] }
+zeroize = { version = "1", features = ["derive"] }
+secrecy = "0.10"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"

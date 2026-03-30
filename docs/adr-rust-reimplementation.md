@@ -1,6 +1,6 @@
 # ADR: Reimplementation of kunipa-securedb in Rust
 
-**Status**: Accepted — development not yet started
+**Status**: Implemented — development complete, pending migration and full security audit
 **Date**: 2026-03-30
 **Branch**: `rust-reimplementation`
 
