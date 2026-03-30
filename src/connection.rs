@@ -222,6 +222,9 @@ pub(crate) fn open_database(path: &str, opts: Options) -> Result<Database> {
     }
 
     // Build open flags.
+    // NO_MUTEX is safe: the crate's own Mutex<Option<Inner>> serializes all
+    // access. Do not remove this flag or weaken the mutex without reviewing
+    // SQLite's threading modes (multi-thread vs serialized).
     let mut flags = OpenFlags::SQLITE_OPEN_NO_MUTEX;
     if is_memory {
         flags |= OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE;

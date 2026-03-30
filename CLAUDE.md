@@ -8,7 +8,7 @@ A Rust crate wrapping SQLCipher (via `rusqlite` + `bundled-sqlcipher`) with atom
 
 Used by KunipaMail and KunipaLedger (Rust + Tauri). Intentionally limited scope: no savepoints, backup API, custom functions, or interrupts.
 
-Reimplemented from Go — the original Go implementation lives on the `main` branch (to be archived as `main-go`).
+Reimplemented from Go — the original Go implementation is archived on the `main-go` branch.
 
 ## Build
 
@@ -16,7 +16,7 @@ Reimplemented from Go — the original Go implementation lives on the `main` bra
 cargo build
 ```
 
-Uses `bundled-sqlcipher` by default — no system libraries required. For system-linked SQLCipher, use the `system-sqlcipher` feature.
+Uses `bundled-sqlcipher` by default — no system libraries required.
 
 ## Test
 
