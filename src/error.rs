@@ -26,7 +26,9 @@ pub enum Error {
     Closed,
 
     /// Internal mutex was poisoned (a thread panicked while holding the lock).
-    #[error("securedb: internal mutex poisoned — a thread panicked while holding the database lock")]
+    #[error(
+        "securedb: internal mutex poisoned — a thread panicked while holding the database lock"
+    )]
     Poisoned,
 
     /// Invalid option combination.

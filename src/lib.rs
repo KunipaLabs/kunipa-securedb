@@ -6,15 +6,15 @@
 //! single-connection SQLCipher database that applies the encryption key
 //! atomically right after opening, before any other operation.
 
+pub(crate) mod connection;
 pub mod error;
 pub mod options;
-pub(crate) mod connection;
 mod verify;
 
+pub use connection::{Database, SecureKey, wrap_key};
 pub use error::{Error, Result};
 pub use options::{EncryptionMode, Options};
-pub use connection::{Database, SecureKey, wrap_key};
-pub use verify::{looks_plaintext, can_open_with_key, verify_cipher_metadata};
+pub use verify::{can_open_with_key, looks_plaintext, verify_cipher_metadata};
 
 /// Opens a SQLCipher database with atomic key application.
 ///

@@ -2,10 +2,10 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
+use crate::Database;
 use crate::connection::wrap_key;
 use crate::error::{Error, Result};
 use crate::options::{EncryptionMode, Options};
-use crate::Database;
 
 /// The 16-byte header of an unencrypted SQLite database.
 const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
@@ -73,9 +73,8 @@ pub fn can_open_with_key(path: &str, key: &[u8]) -> Result<()> {
 /// proof of a valid key is the `SELECT count(*) FROM sqlite_master` probe
 /// that `open()` performs atomically.
 pub fn verify_cipher_metadata(db: &Database) -> Result<String> {
-    let version: String = db.with_connection(|conn| {
-        conn.query_row("PRAGMA cipher_version;", [], |row| row.get(0))
-    })?;
+    let version: String =
+        db.with_connection(|conn| conn.query_row("PRAGMA cipher_version;", [], |row| row.get(0)))?;
 
     if version.is_empty() {
         return Err(Error::CipherUnavailable);

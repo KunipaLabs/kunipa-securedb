@@ -1,6 +1,6 @@
 use kunipa_securedb::{
-    can_open_with_key, looks_plaintext, open, verify_cipher_metadata, wrap_key, Database,
-    EncryptionMode, Error, Options,
+    Database, EncryptionMode, Error, Options, can_open_with_key, looks_plaintext, open,
+    verify_cipher_metadata, wrap_key,
 };
 use tempfile::TempDir;
 
@@ -57,11 +57,15 @@ fn test_encrypted_header_not_plaintext() {
 
     let db = open_test_db(&dir, key, EncryptionMode::Required);
     create_test_table(&db);
-    db.execute("INSERT INTO t (val) VALUES (?1)", ["hello"]).unwrap();
+    db.execute("INSERT INTO t (val) VALUES (?1)", ["hello"])
+        .unwrap();
     db.close().unwrap();
 
     let plain = looks_plaintext(&path).unwrap();
-    assert!(!plain, "encrypted database should not have plaintext header");
+    assert!(
+        !plain,
+        "encrypted database should not have plaintext header"
+    );
 }
 
 #[test]
@@ -105,7 +109,8 @@ fn test_right_key_succeeds() {
     )
     .unwrap();
     create_test_table(&db);
-    db.execute("INSERT INTO t (val) VALUES (?1)", ["world"]).unwrap();
+    db.execute("INSERT INTO t (val) VALUES (?1)", ["world"])
+        .unwrap();
     db.close().unwrap();
 
     // Reopen with same key.
@@ -146,10 +151,11 @@ fn test_fts5() {
              INSERT INTO docs (title, body) VALUES ('hello', 'world of rust');
              INSERT INTO docs (title, body) VALUES ('goodbye', 'cruel world');",
         )?;
-        let count: i64 =
-            conn.query_row("SELECT count(*) FROM docs WHERE docs MATCH 'world'", [], |r| {
-                r.get(0)
-            })?;
+        let count: i64 = conn.query_row(
+            "SELECT count(*) FROM docs WHERE docs MATCH 'world'",
+            [],
+            |r| r.get(0),
+        )?;
         assert_eq!(count, 2);
         Ok(())
     })
@@ -174,7 +180,8 @@ fn test_key_rotation() {
     )
     .unwrap();
     create_test_table(&db);
-    db.execute("INSERT INTO t (val) VALUES (?1)", ["before rotation"]).unwrap();
+    db.execute("INSERT INTO t (val) VALUES (?1)", ["before rotation"])
+        .unwrap();
 
     // Rotate to key B.
     db.rotate_key(&key_b).unwrap();
@@ -222,7 +229,8 @@ fn test_encryption_disabled() {
     )
     .unwrap();
     create_test_table(&db);
-    db.execute("INSERT INTO t (val) VALUES (?1)", ["plain"]).unwrap();
+    db.execute("INSERT INTO t (val) VALUES (?1)", ["plain"])
+        .unwrap();
     db.close().unwrap();
 
     let plain = looks_plaintext(&path).unwrap();
@@ -242,7 +250,8 @@ fn test_wal_sidecar_not_plaintext() {
 
     let db = open_test_db(&dir, key, EncryptionMode::Required);
     create_test_table(&db);
-    db.execute("INSERT INTO t (val) VALUES (?1)", ["wal test"]).unwrap();
+    db.execute("INSERT INTO t (val) VALUES (?1)", ["wal test"])
+        .unwrap();
 
     // WAL and SHM files should not have plaintext headers.
     let wal_path = format!("{}-wal", path);
@@ -277,11 +286,8 @@ fn test_concurrent_reopen() {
             create_test_table(&db);
         }
 
-        db.execute(
-            "INSERT INTO t (val) VALUES (?1)",
-            [format!("iter-{}", i)],
-        )
-        .unwrap();
+        db.execute("INSERT INTO t (val) VALUES (?1)", [format!("iter-{}", i)])
+            .unwrap();
 
         let count: i64 = db
             .query_row("SELECT count(*) FROM t", [], |row| row.get(0))
@@ -454,7 +460,8 @@ fn test_memory_unencrypted() {
 
     db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])
         .unwrap();
-    db.execute("INSERT INTO t (val) VALUES (?1)", ["mem"]).unwrap();
+    db.execute("INSERT INTO t (val) VALUES (?1)", ["mem"])
+        .unwrap();
 
     let val: String = db
         .query_row("SELECT val FROM t WHERE id = 1", [], |row| row.get(0))
@@ -477,7 +484,8 @@ fn test_memory_encrypted() {
 
     db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])
         .unwrap();
-    db.execute("INSERT INTO t (val) VALUES (?1)", ["encrypted mem"]).unwrap();
+    db.execute("INSERT INTO t (val) VALUES (?1)", ["encrypted mem"])
+        .unwrap();
 
     let val: String = db
         .query_row("SELECT val FROM t WHERE id = 1", [], |row| row.get(0))
@@ -521,10 +529,12 @@ fn test_type_bindings() {
             ],
         )?;
 
-        let (blob, float_val, bool_val, null_val): (Vec<u8>, f64, bool, Option<String>) =
-            conn.query_row("SELECT blob_col, float_col, bool_col, null_col FROM types WHERE id = 1", [], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-            })?;
+        let (blob, float_val, bool_val, null_val): (Vec<u8>, f64, bool, Option<String>) = conn
+            .query_row(
+                "SELECT blob_col, float_col, bool_col, null_col FROM types WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
 
         assert_eq!(blob, vec![0xDE, 0xAD, 0xBE, 0xEF]);
         assert!((float_val - 42.195).abs() < 1e-10);
@@ -629,7 +639,8 @@ fn test_read_only_mode() {
     )
     .unwrap();
     create_test_table(&db);
-    db.execute("INSERT INTO t (val) VALUES (?1)", ["ro test"]).unwrap();
+    db.execute("INSERT INTO t (val) VALUES (?1)", ["ro test"])
+        .unwrap();
     db.close().unwrap();
 
     // Reopen read-only.
@@ -657,7 +668,8 @@ fn test_read_only_mode() {
 
 #[test]
 fn test_can_open_with_key_nonexistent() {
-    let err = can_open_with_key("/tmp/nonexistent_securedb_test_2.db", &test_key_raw()).unwrap_err();
+    let err =
+        can_open_with_key("/tmp/nonexistent_securedb_test_2.db", &test_key_raw()).unwrap_err();
     assert_eq!(err, Error::FileNotFound);
 }
 
@@ -697,8 +709,6 @@ fn test_read_only_with_create_if_missing_returns_error() {
 
     assert_eq!(
         err,
-        Error::InvalidOptions(
-            "read_only and create_if_missing cannot both be true".into()
-        )
+        Error::InvalidOptions("read_only and create_if_missing cannot both be true".into())
     );
 }

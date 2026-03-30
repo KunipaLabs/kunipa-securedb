@@ -98,6 +98,12 @@ impl Database {
         if new_key.is_empty() {
             return Err(Error::KeyRequired);
         }
+        if new_key.len() < MIN_KEY_LEN {
+            return Err(Error::InvalidOptions(format!(
+                "key must be at least {} bytes",
+                MIN_KEY_LEN
+            )));
+        }
 
         let mut guard = self.inner.lock().map_err(|_| Error::Poisoned)?;
         let inner = guard.as_mut().ok_or(Error::Closed)?;
@@ -176,6 +182,12 @@ pub(crate) fn open_database(path: &str, opts: Options) -> Result<Database> {
             let secret: &Zeroizing<Vec<u8>> = k.expose_secret();
             if secret.is_empty() {
                 return Err(Error::KeyRequired);
+            }
+            if secret.len() < MIN_KEY_LEN {
+                return Err(Error::InvalidOptions(format!(
+                    "key must be at least {} bytes",
+                    MIN_KEY_LEN
+                )));
             }
             Some(k)
         }
@@ -271,8 +283,18 @@ pub(crate) fn is_memory_path(path: &str) -> bool {
     path == ":memory:"
 }
 
+/// Minimum accepted key length (bytes). SQLCipher recommends 32, but 16
+/// (128-bit) is the floor for meaningful encryption.
+const MIN_KEY_LEN: usize = 16;
+
 /// Encodes raw key bytes as a hex string for PRAGMA key/rekey.
-/// The returned string is zeroed on drop.
+/// The returned string is zeroed on drop. Uses a single pre-allocated
+/// buffer to avoid intermediate un-zeroed heap allocations.
 fn hex_key(key: &[u8]) -> Zeroizing<String> {
-    Zeroizing::new(key.iter().map(|b| format!("{:02x}", b)).collect())
+    use std::fmt::Write;
+    let mut hex = Zeroizing::new(String::with_capacity(key.len() * 2));
+    for b in key {
+        write!(&mut *hex, "{:02x}", b).expect("hex write");
+    }
+    hex
 }
